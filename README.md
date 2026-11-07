@@ -1,4 +1,4 @@
-# threshold-wallet
+# Threshold Wallet
 
 A two-party threshold wallet for Bitcoin, built from scratch in Python.
 
