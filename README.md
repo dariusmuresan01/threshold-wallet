@@ -44,7 +44,7 @@ I am building this to understand, end to end, how the cryptography behind thresh
 |---|---|---|
 | ✅ | Project setup (Python 3.12, `coincurve` / libsecp256k1) | |
 | ✅ | Single-signer **Schnorr (BIP-340)**, implemented by hand and accepted by the libsecp256k1 verifier | [`src/schnorr.py`](src/schnorr.py) |
-| ⏳ | Single-signer **ECDSA** (low-s, strict DER as in BIP-66) | next |
+| ✅ | Single-signer **ECDSA** with low-s normalisation and strict DER encoding/decoding (BIP-66), accepted by the libsecp256k1 verifier | [`src/ecdsa.py`](src/ecdsa.py) |
 | ⏳ | Nonce-reuse attack demo (why a repeated nonce leaks the key) | next |
 | ⏳ | Additive secret sharing and passive **BeDOZa** (Beaver triples, secure inversion) | planned |
 | ⏳ | **Two-party threshold Schnorr** | planned |
@@ -63,14 +63,12 @@ python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 python src/schnorr.py
+python src/ecdsa.py
 ```
 
-Expected output:
+Each script runs its own test suite and ends with:
 
 ```
-0000000000000000000000000000000000000000000000000000000000000001
-First error gathered correctly!
-Second error gathered correctly!
 All tests have passed!
 ```
 
@@ -87,12 +85,25 @@ Its built-in tests check that 50 signatures with fresh random keys all verify, t
 
 This single-signer version is the baseline the threshold protocol will be checked against.
 
+## What `src/ecdsa.py` does
+
+A reference ECDSA signer, reusing the helpers from `schnorr.py`:
+
+- signing: `r = x(k·G) mod n`, `s = k⁻¹·(z + r·d) mod n`, retrying on the (astronomically unlikely) zero cases;
+- **low-s** normalisation (`s ≤ n/2`), which libsecp256k1 enforces to rule out malleable signatures;
+- strict **DER** encoding and decoding of `(r, s)`, as required by BIP-66.
+
+Its tests check that 50 signatures verify under libsecp256k1 with low `s`, that the "high-s" twin `(r, n − s)` is rejected, that a modified message, a modified `s` or a different key all fail, and that a structurally broken DER blob is refused outright.
+
+ECDSA is the hard case for threshold signing: the inverse `k⁻¹` and the product `k⁻¹·d` cannot be computed share by share, which is exactly what the MPC layer will have to solve.
+
 ## Project layout
 
 ```
 threshold-wallet/
 ├── src/
-│   └── schnorr.py        single-signer BIP-340 reference
+│   ├── schnorr.py        single-signer BIP-340 reference
+│   └── ecdsa.py          single-signer ECDSA reference (low-s, DER)
 ├── tests/                test suite (coming)
 ├── requirements.txt
 └── README.md
