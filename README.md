@@ -45,8 +45,8 @@ I am building this to understand, end to end, how the cryptography behind thresh
 | ✅ | Project setup (Python 3.12, `coincurve` / libsecp256k1) | |
 | ✅ | Single-signer **Schnorr (BIP-340)**, implemented by hand and accepted by the libsecp256k1 verifier | [`src/schnorr.py`](src/schnorr.py) |
 | ✅ | Single-signer **ECDSA** with low-s normalisation and strict DER encoding/decoding (BIP-66), accepted by the libsecp256k1 verifier | [`src/ecdsa.py`](src/ecdsa.py) |
-| ⏳ | Nonce-reuse attack demo (why a repeated nonce leaks the key) | next |
-| ⏳ | Additive secret sharing and passive **BeDOZa** (Beaver triples, secure inversion) | planned |
+| ✅ | **Nonce-reuse attack** on both schemes: the private key is recovered from two signatures that share a nonce, then used to forge a new signature | [`src/nonce_reuse.py`](src/nonce_reuse.py) |
+| ⏳ | Additive secret sharing and passive **BeDOZa** (Beaver triples, secure inversion) | next |
 | ⏳ | **Two-party threshold Schnorr** | planned |
 | ⏳ | **Two-party threshold ECDSA** | planned |
 | ⏳ | Fixed test vectors (incl. official BIP-340 vectors) and malformed-share tests | planned |
@@ -64,6 +64,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 python src/schnorr.py
 python src/ecdsa.py
+python src/nonce_reuse.py
 ```
 
 Each script runs its own test suite and ends with:
@@ -97,13 +98,25 @@ Its tests check that 50 signatures verify under libsecp256k1 with low `s`, that 
 
 ECDSA is the hard case for threshold signing: the inverse `k⁻¹` and the product `k⁻¹·d` cannot be computed share by share, which is exactly what the MPC layer will have to solve.
 
+## What `src/nonce_reuse.py` shows
+
+Why a signature nonce must never repeat. Deliberately vulnerable signers (`bad_schnorr_sign`, `bad_ecdsa_sign`, kept separate from the reference signers on purpose) sign two different messages with the same nonce. Each signature verifies on its own, yet together they give the key away:
+
+- **Schnorr:** `d = (s₁ − s₂) · (e₁ − e₂)⁻¹ mod n`
+- **ECDSA:** `k = (z₁ − z₂) · (s₁ − s₂)⁻¹`, then `d = (s₁·k − z₁) · r⁻¹`; because of low-s normalisation the sign of each `s` is unknown, so two candidates are tried and checked against the public key.
+
+In 50 out of 50 runs per scheme the key is recovered and used to forge a signature on a new message that libsecp256k1 accepts. Signatures made with fresh nonces are rejected by the attack.
+
+For a threshold wallet this matters even more: it is enough for *one* device to reuse its nonce share for the other device to learn the full key.
+
 ## Project layout
 
 ```
 threshold-wallet/
 ├── src/
 │   ├── schnorr.py        single-signer BIP-340 reference
-│   └── ecdsa.py          single-signer ECDSA reference (low-s, DER)
+│   ├── ecdsa.py          single-signer ECDSA reference (low-s, DER)
+│   └── nonce_reuse.py    demo: key recovery from a reused nonce
 ├── tests/                test suite (coming)
 ├── requirements.txt
 └── README.md
