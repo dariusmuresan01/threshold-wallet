@@ -47,8 +47,8 @@ I am building this to understand, end to end, how the cryptography behind thresh
 | ✅ | Single-signer **ECDSA** with low-s normalisation and strict DER encoding/decoding (BIP-66), accepted by the libsecp256k1 verifier | [`src/ecdsa.py`](src/ecdsa.py) |
 | ✅ | **Nonce-reuse attack** on both schemes: the private key is recovered from two signatures that share a nonce, then used to forge a new signature | [`src/nonce_reuse.py`](src/nonce_reuse.py) |
 | ✅ | Additive secret sharing and passive **BeDOZa** arithmetic: local linear operations, Beaver-triple multiplication, masked inversion and lifting to curve points | [`src/bedoza.py`](src/bedoza.py) |
-| ⏳ | **Two-party threshold Schnorr** | next |
-| ⏳ | **Two-party threshold ECDSA** | planned |
+| ✅ | **Two-party threshold Schnorr** (BIP-340 compatible): shared key, per-party nonces, parity handling on shares, partial signatures, plus a nonce-share reuse attack | [`src/threshold_schnorr.py`](src/threshold_schnorr.py) |
+| ⏳ | **Two-party threshold ECDSA** | next |
 | ⏳ | Fixed test vectors (incl. official BIP-340 vectors) and malformed-share tests | planned |
 | 💡 | Cost comparison: Schnorr vs ECDSA (rounds, triples, opened values, time) | stretch goal |
 
@@ -66,6 +66,7 @@ python src/schnorr.py
 python src/ecdsa.py
 python src/nonce_reuse.py
 python src/bedoza.py
+python src/threshold_schnorr.py
 ```
 
 Each script runs its own test suite and ends with:
@@ -123,6 +124,23 @@ The MPC layer the threshold protocols are built on: two-party arithmetic on secr
 
 Besides checking every operation against the plain computation (50 random runs each), the tests show what goes wrong when the rules are broken: a corrupted triple silently shifts the product, a reused triple leaks `x₁ − x₂`, a reused mask leaks `k₁/k₂`, and inverting zero is refused.
 
+## What `src/threshold_schnorr.py` does
+
+The first real threshold signature in the project: two parties produce a standard 64-byte BIP-340 signature without the private key ever existing in one place. The verifier is the same libsecp256k1 check used for the single-signer version, and it has no way to tell the difference.
+
+- **Key setup (once):** a dealer shares a random key `[d]`. Each party lifts its share, `P = d_A·G + d_B·G`, and if `P` has an odd y coordinate both parties negate their shares locally (multiplying by `n − 1`), so the shared key matches the even-y convention of BIP-340.
+- **Round 1:** each party picks its own nonce share `k_i` and publishes `k_i·G`. If the combined `R` has an odd y, both negate their nonce shares. Each party then computes the challenge `e` on its own, since all of its inputs are public.
+- **Round 2:** each party sends its partial signature `s_i = k_i + e·d_i`; the sum `s` is the signature scalar.
+
+Everything is linear in the secrets, so no Beaver triples are needed: two rounds per signature, one curve point and one scalar sent by each party.
+
+The tests go beyond "it verifies":
+
+- the threshold key is an ordinary BIP-340 key: signing with the reconstructed `d` through the single-signer code verifies under the same public key;
+- a corrupted partial signature (`s + 1`) is rejected by the verifier;
+- if one party reuses its nonce share, every signature still looks perfectly valid from the outside, yet the other party recovers that party's key share from two partial signatures (trying both parity cases), rebuilds the full key and forges a signature on its own;
+- with fresh nonce shares the same attack finds nothing.
+
 ## Project layout
 
 ```
@@ -131,7 +149,8 @@ threshold-wallet/
 │   ├── schnorr.py        single-signer BIP-340 reference
 │   ├── ecdsa.py          single-signer ECDSA reference (low-s, DER)
 │   ├── nonce_reuse.py    demo: key recovery from a reused nonce
-│   └── bedoza.py         passive two-party BeDOZa arithmetic (dealer, Beaver, inversion, lifting)
+│   ├── bedoza.py         passive two-party BeDOZa arithmetic (dealer, Beaver, inversion, lifting)
+│   └── threshold_schnorr.py   two-party BIP-340 threshold signing and the nonce-share reuse attack
 ├── tests/                test suite (coming)
 ├── requirements.txt
 └── README.md
@@ -142,7 +161,8 @@ threshold-wallet/
 This prototype deliberately leaves out what a production threshold wallet needs:
 
 - **passive security only**: a device that deviates from the protocol is not detected;
-- **trusted dealer**: the setup party knows everything by construction;
+- **trusted dealer**: the setup party knows the key by construction (no distributed key generation);
+- **no nonce commitments**: each party picks its nonce freely, which is fine against a passive adversary but not against an active one running concurrent sessions, which is why MuSig2 and FROST add commitments or a second nonce;
 - **simulated parties**: both devices run in one Python process, with no real network in between;
 - **no side-channel protection** in the Python code;
 - **no handling of aborts** or of persistent nonce state across sessions;
@@ -155,4 +175,6 @@ This prototype deliberately leaves out what a production threshold wallet needs:
 - A. Dalskov, C. Orlandi, M. Keller, K. Shrishak, H. Shulman, *Securing DNSSEC Keys via Threshold ECDSA from Generic MPC* ([ePrint 2019/889](https://eprint.iacr.org/2019/889))
 - R. Bendlin, I. Damgård, C. Orlandi, S. Zakarias, *Semi-Homomorphic Encryption and Multiparty Computation* ([ePrint 2010/514](https://eprint.iacr.org/2010/514))
 - D. Beaver, *Efficient Multiparty Protocols Using Circuit Randomization*, CRYPTO 1991
+- [BIP-327: MuSig2 for BIP340-compatible Multi-Signatures](https://github.com/bitcoin/bips/blob/master/bip-0327.mediawiki)
+- C. Komlo, I. Goldberg, *FROST: Flexible Round-Optimized Schnorr Threshold Signatures* ([ePrint 2020/852](https://eprint.iacr.org/2020/852)), standardised as [RFC 9591](https://www.rfc-editor.org/rfc/rfc9591)
 - [libsecp256k1](https://github.com/bitcoin-core/secp256k1) and its Python binding [coincurve](https://github.com/ofek/coincurve)
